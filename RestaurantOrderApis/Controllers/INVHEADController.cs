@@ -1,6 +1,7 @@
 ﻿using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Templates.Blazor;
 using RestaurantOrderApis.Models;
 
 namespace RestaurantOrderApis.Controllers
@@ -390,6 +391,36 @@ namespace RestaurantOrderApis.Controllers
                 return Ok(-1);
             }
             return Ok(-1);
+        }
+
+
+        [HttpPost("RemoveItemFromCurrentBill")]
+        public async Task<IActionResult> RemoveItemFromCurrentBill([FromBody] INVLINE removeItem)
+        {
+            try
+            {
+                string connStr = _config.GetConnectionString("DefaultConnection");
+
+                using var connection = new SqlConnection(connStr);
+
+                string query = @"DELETE FROM INVLINE WHERE TXNNO = @TXNNO AND LINE = @LINE AND ITEMCODE = @ITEMCODE";
+
+                int rowsAffected = await connection.ExecuteAsync(query, new
+                {
+                    removeItem.TXNNO,
+                    removeItem.LINE,
+                    removeItem.ITEMCODE
+                });
+
+                if (rowsAffected == 0)
+                    return Ok("Item not found or already removed");
+
+                return Ok("Item removed successfully!");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error removing item: {ex.Message}");
+            }
         }
 
     }
