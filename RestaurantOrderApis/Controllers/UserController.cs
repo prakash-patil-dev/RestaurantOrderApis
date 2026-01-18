@@ -1,8 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Dapper;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using RestaurantOrderApis.Models;
 using System.Data;
 using System.Text;
-using RestaurantOrderApis.Models;
 
 namespace RestaurantOrderApis.Controllers
 {
@@ -201,5 +202,35 @@ namespace RestaurantOrderApis.Controllers
             }
 
         }
+
+
+
+        [HttpGet("GetCrCards")]
+        public async Task<ActionResult<List<CardTypes>>> GetCrCards()
+        {
+
+            try
+            {
+                string connStr = _config.GetConnectionString("DefaultConnection");
+
+                //using var conn = new SqlConnection(connStr);
+                //await conn.OpenAsync();
+                using (var connection = new SqlConnection(connStr))
+                {
+                    string query = @"select * from CRCARD";
+
+                    var CRCARDList = (await connection.QueryAsync<CardTypes>(query)).ToList();
+                    return Ok(CRCARDList);
+                }
+
+
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error fetching GetCrCards: {ex.Message}");
+            }
+            // return View();
+        }
+
     }
 }

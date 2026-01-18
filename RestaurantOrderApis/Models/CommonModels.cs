@@ -106,4 +106,14 @@
         public string HAPPYFLAG { get; set; } = string.Empty;
         public string ISWEIGHITEM { get; set; } = string.Empty;
     }
+
+
+
+    public class CardTypes
+    {
+        public string? CODE { get; set; }
+        public string? NAME { get; set; } = string.Empty;
+        public float PERCENTAGE { get; set; }
+        public string? LOYALTY { get; set; } = string.Empty;
+    }
 }

@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Dapper;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using RestaurantOrderApis.Extensions;
 using RestaurantOrderApis.Models;
@@ -128,5 +129,51 @@ namespace RestaurantOrderApis.Controllers
             }
 
         }
+
+
+        [HttpGet("GetComboList")]
+        public async Task<ActionResult<List<ComboDto>>> GetComboList()
+        {
+            try
+            {
+                string connStr = _config.GetConnectionString("DefaultConnection");
+
+                using var connection = new SqlConnection(connStr);
+
+                string query = @"SELECT CODE,MAX(NAME) AS NAME FROM COMBO GROUP BY CODE ORDER BY CODE";
+
+                var comboList = (await connection.QueryAsync<ComboDto>(query)).ToList();
+
+                return Ok(comboList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error fetching combo list: {ex.Message}");
+            }
+        }
+
+
+
+        [HttpGet("GetComboFullList")]
+        public async Task<ActionResult<List<Combo>>> GetComboFullList()
+        {
+            try
+            {
+                string connStr = _config.GetConnectionString("DefaultConnection");
+
+                using var connection = new SqlConnection(connStr);
+
+                string query = @"SELECT * FROM COMBO ORDER BY CODE;";
+
+                var comboList = (await connection.QueryAsync<Combo>(query)).ToList();
+
+                return Ok(comboList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error fetching combo list: {ex.Message}");
+            }
+        }
+
     }
 }
