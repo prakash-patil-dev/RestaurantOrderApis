@@ -38,16 +38,32 @@
         public string UPDATED { get; set; }
     }
 
+    public class INVCURRENCY
+    {
+        public string BranchCode { get; set; }
+        public string CurCode { get; set; }
+        public double TxnNo { get; set; }
+        public DateTime TxnDt { get; set; }
+        public double Amount { get; set; }
+        public string Status { get; set; }
+        public string LastUser { get; set; }
+        public DateTime LastDate { get; set; }
+        public string LastTime { get; set; }
+        public string Updated { get; set; }
+        public double ExchRate { get; set; }
+    }
 
     public class SettlementRequest
     {
         public double BILLNO { get; set; }
-        public double BillAmount { get; set; }
+        public decimal BillAmount { get; set; }
         public string Mode { get; set; }
-        public double CashTotal { get; set; }
-        public double CardTotal { get; set; }
+        public decimal CashTotal { get; set; }
+        public decimal CardTotal { get; set; }
+        public decimal CurrencyTotal { get; set; }
         public INVCARD InvCardEntry { get; set; }
         public CASHDRAW CashEntry { get; set; }
+        public INVCURRENCY CurrencyEntry { get; set; }
         public string LASTUSER { get; set; }
         public DateTime LASTDATE { get; set; }
         public string LASTTIME { get; set; }

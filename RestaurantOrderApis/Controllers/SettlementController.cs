@@ -25,14 +25,13 @@ namespace RestaurantOrderApis.Controllers
         {
             if (settlement == null)
                 return BadRequest("Invalid request");
+            var roundedTotal = Math.Round(settlement.CashTotal + settlement.CardTotal + settlement.CurrencyTotal, 2, MidpointRounding.AwayFromZero);
 
-            // ✅ Amount validation
-            if (settlement.CashTotal + settlement.CardTotal != settlement.BillAmount)
+            var roundedBill = Math.Round(settlement.BillAmount, 2, MidpointRounding.AwayFromZero);
+
+            if (roundedTotal != roundedBill)
                 return BadRequest("Cash + Card total must match bill amount");
-
-            //if (settlement.Mode == "D")
-            //    return BadRequest("Invalid settlement mode");
-
+            
             string connStr = _config.GetConnectionString("DefaultConnection");
 
             using (var connection = new SqlConnection(connStr))
@@ -57,6 +56,14 @@ namespace RestaurantOrderApis.Controllers
                             await connection.ExecuteAsync(cardQuery, settlement.InvCardEntry, transaction);
                         }
 
+
+                        if (settlement.CurrencyTotal > 0)
+                        {
+                            string currQuery = @"INSERT INTO INVCURRENCY(BRANCHCODE,cur_code,TXNNO,TXNDT,AMOUNT,STATUS,LASTUSER,LASTDATE,LASTTIME,UPDATED,EXCHRATE)
+                                                 VALUES (@BranchCode,@CurCode,@TxnNo,@TxnDt,@Amount,@Status,@LastUser,@LastDate,@LastTime,@Updated,@ExchRate)";
+                            await connection.ExecuteAsync(currQuery, settlement.CurrencyEntry, transaction);
+                        }
+
                         string updateHeadQuery = @$"UPDATE INVHEAD  SET STATUS = 'C', LASTDATE = @LASTDATE, LASTUSER =@LASTUSER,LASTTIME=@LASTTIME  WHERE TXNNO = @BILLNO";
                         await connection.ExecuteAsync( updateHeadQuery,  settlement, transaction );
 
@@ -74,6 +81,60 @@ namespace RestaurantOrderApis.Controllers
                     }
                 }
             }
+        }
+
+
+        [HttpGet]
+        [Route("GetSysParam")]
+        public async Task<ActionResult> GetSysParam()
+        {
+            try
+            {
+                SysParam model = new();
+                string connStr = _config.GetConnectionString("DefaultConnection");
+                using (var connection = new SqlConnection(connStr))
+                {
+                    string query = @"SELECT cash1, cash2, cash3, cash4, cash5, cash6, cash7, cash8 FROM SYSPARAM";
+                    model = (await connection.QueryAsync<SysParam>(query)).FirstOrDefault();
+                }
+                if (model == null)
+                    return NotFound();
+
+                return Ok(model);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error fetching GetSysParam : {ex.Message}");
+            }
+        }
+
+
+        [HttpGet("GetCurrencytypes")]
+        public async Task<ActionResult<List<EXRATE>>> GetCurrencytypes()
+        {
+            // var Users = new List<Customer>();
+
+            try
+            {
+                string connStr = _config.GetConnectionString("DefaultConnection");
+
+                //using var conn = new SqlConnection(connStr);
+                //await conn.OpenAsync();
+                using (var connection = new SqlConnection(connStr))
+                {
+                    string query = @"select * from EXRATE order by ERATE_DATE asc";
+
+                    var invLineList = (await connection.QueryAsync<EXRATE>(query)).ToList();
+                    return Ok(invLineList);
+                }
+
+
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error fetching invoice lines: {ex.Message}");
+            }
+            // return View();
         }
 
     }
