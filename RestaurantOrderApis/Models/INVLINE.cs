@@ -1,4 +1,6 @@
-﻿namespace RestaurantOrderApis.Models
+﻿using System.Collections.ObjectModel;
+
+namespace RestaurantOrderApis.Models
 {
     //public class INVLINE
     //{
@@ -60,10 +62,32 @@
         public string? DEPTCODE { get; set; }
         public string? SEASONCODE { get; set; }
         public double? DINETAKEVAL { get; set; }
+        public ObservableCollection<INVMESSAGE> KotMessages { get; set; } = new();
     }
     public class InvLineFilter
     {
         public double TXNNO { get; set; }
         //public string? Password { get; set; }
+    }
+
+
+    public class INVMESSAGE
+    {
+        public string BRANCHCODE { get; set; }
+        public double? TXNNO { get; set; }
+        public DateTime TXNDT { get; set; }
+
+        public int ILINE { get; set; }
+        public int LINE { get; set; }
+
+        public string ITEMCODE { get; set; }
+        public string MESSAGES { get; set; }
+        public string TYPE { get; set; }
+
+        public string LastUser { get; set; }
+        public DateTime LastDate { get; set; }
+        public string LastTime { get; set; }
+
+        public string Updated { get; set; }
     }
 }

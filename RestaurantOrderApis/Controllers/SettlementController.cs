@@ -57,13 +57,19 @@ namespace RestaurantOrderApis.Controllers
                         }
 
 
-                        if (settlement.CurrencyTotal > 0)
+                        //if (settlement.CurrencyTotal > 0)
+                        //{
+                        //    string currQuery = @"INSERT INTO INVCURRENCY(BRANCHCODE,cur_code,TXNNO,TXNDT,AMOUNT,STATUS,LASTUSER,LASTDATE,LASTTIME,UPDATED,EXCHRATE)
+                        //                         VALUES (@BranchCode,@CurCode,@TxnNo,@TxnDt,@Amount,@Status,@LastUser,@LastDate,@LastTime,@Updated,@ExchRate)";
+                        //    await connection.ExecuteAsync(currQuery, settlement.CurrencyEntry, transaction);
+                        //}
+                        if (settlement.CurrencyTotal > 0 && settlement.CurrencyEntry?.Any() == true)
                         {
-                            string currQuery = @"INSERT INTO INVCURRENCY(BRANCHCODE,cur_code,TXNNO,TXNDT,AMOUNT,STATUS,LASTUSER,LASTDATE,LASTTIME,UPDATED,EXCHRATE)
-                                                 VALUES (@BranchCode,@CurCode,@TxnNo,@TxnDt,@Amount,@Status,@LastUser,@LastDate,@LastTime,@Updated,@ExchRate)";
+                            string currQuery = @"INSERT INTO INVCURRENCY (BRANCHCODE,cur_code,TXNNO,TXNDT,AMOUNT,STATUS,LASTUSER,LASTDATE,LASTTIME,UPDATED,EXCHRATE)
+                                                VALUES (@BranchCode,@CurCode,@TxnNo,@TxnDt,@Amount,@Status,@LastUser,@LastDate,@LastTime,@Updated,@ExchRate)";
+
                             await connection.ExecuteAsync(currQuery, settlement.CurrencyEntry, transaction);
                         }
-
                         string updateHeadQuery = @$"UPDATE INVHEAD  SET STATUS = 'C', LASTDATE = @LASTDATE, LASTUSER =@LASTUSER,LASTTIME=@LASTTIME  WHERE TXNNO = @BILLNO";
                         await connection.ExecuteAsync( updateHeadQuery,  settlement, transaction );
 

@@ -1,8 +1,10 @@
 ﻿using Dapper;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.CodeAnalysis.Text;
 using Microsoft.Data.SqlClient;
 using Microsoft.VisualStudio.Web.CodeGenerators.Mvc.Templates.Blazor;
 using RestaurantOrderApis.Models;
+using System.Collections.ObjectModel;
 
 namespace RestaurantOrderApis.Controllers
 {
@@ -59,6 +61,28 @@ namespace RestaurantOrderApis.Controllers
                     string query = @"SELECT * FROM INVLINE WHERE TXNNO = @txnNo ORDER BY TXNDT ASC";
 
                     var invLineList = (await connection.QueryAsync<INVLINE>(query, new { txnNo })).ToList();
+
+                    string msgQuery = @"SELECT * FROM INVMESSAGE WHERE TXNNO = @txnNo";
+                    //this is for invmessages if avalible then only it will be added to the invline list based on the line number and txnno
+
+                    var invMessages = (await connection.QueryAsync<INVMESSAGE>(msgQuery, new { txnNo })).ToList();
+                    if (invMessages != null && invMessages.Count > 0)
+                    {
+                        foreach (var item in invLineList)
+                        {
+                            //if (item.KOT?.Trim().ToUpper() == "Y")
+                            //{
+                            var messages = invMessages.Where(m => m.TXNNO == item.TXNNO && m.ILINE == item.LINE).ToList();
+
+                            item.KotMessages = new ObservableCollection<INVMESSAGE>(messages);
+                            //item.KotMessages = messages;
+                            //        }
+                            //else
+                            //{
+                            //    item.KotMessages = new List<string>(); // optional
+                            //}
+                        }
+                    }
                     return Ok(invLineList);
                 }
 
@@ -278,12 +302,38 @@ namespace RestaurantOrderApis.Controllers
                                                                           REQCUST=@REQCUST,REQCOMPANY=@REQCOMPANY,REQFLAG=@REQFLAG,LASTUSER=@LASTUSER,LASTDATE=CONVERT(datetime2(0), @LASTDATE),LASTTIME=@LASTTIME,REPORTFLAG=@REPORTFLAG,
                                                                           KOT=@KOT,SCANITEMCODE=@SCANITEMCODE,STATIONID=@STATIONID,PREPARED=@PREPARED,PRICETYPE=@PRICETYPE,TOPPING=@TOPPING,DEPTCODE=@DEPTCODE,
                                                                           SEASONCODE=@SEASONCODE,DINETAKEVAL=@DINETAKEVAL  WHERE TXNNO =@TXNNO and ITEMCODE=@ITEMCODE and LINE= @LINE;";
+
+                                        if (!string.IsNullOrEmpty(detailQuery))
+                                            await connection.ExecuteAsync(detailQuery, detail, transaction);
+
+                                        foreach (var InvMessage in detail.KotMessages)
+                                        {
+                                            string checkinvMessageExists = $@"SELECT CASE 
+                                                                              WHEN EXISTS (SELECT 1 FROM INVMESSAGE WHERE TXNNO = {InvMessage.TXNNO} and ITEMCODE ='{InvMessage.ITEMCODE}' and ILINE ={InvMessage.ILINE} and  LINE ={InvMessage.LINE})
+                                                                              THEN CAST(1 AS BIT) 
+                                                                              ELSE CAST(0 AS BIT) 
+                                                                          END";
+                                            bool InvmessageExists = await connection.ExecuteScalarAsync<bool>(checkinvMessageExists, transaction: transaction);
+                                            if (!InvmessageExists)
+                                            {
+                                                
+                                                var nextLine = await connection.ExecuteScalarAsync<int>(@"SELECT ISNULL(CASE WHEN A.MaxLine > B.MaxLine THEN A.MaxLine ELSE B.MaxLine END, 0) + 1 AS NextLine  FROM (SELECT MAX(LINE) AS MaxLine FROM INVLINE WHERE TXNNO = @TXNNO) A, (SELECT MAX(LINE) AS MaxLine FROM INVMESSAGE WHERE TXNNO = @TXNNO) B;", new { TXNNO = detail.TXNNO }, transaction: transaction);
+                                                InvMessage.TXNNO = detail.TXNNO;
+                                                InvMessage.ILINE = detail.LINE;
+                                                InvMessage.LINE = nextLine;
+                                                InvMessage.TXNDT = DateTime.Now;
+                                                InvMessage.LastDate = DateTime.Now;
+                                                InvMessage.LastTime = DateTime.Now.ToString("hh:mm:ss tt");
+                                                string lnvlineQuery = @"INSERT INTO INVMESSAGE (BRANCHCODE, TXNNO, TXNDT, ILINE, LINE, ITEMCODE, MESSAGES, TYPE, LastUser, LastDate, LastTime, Updated) VALUES (@BRANCHCODE, @TXNNO, @TXNDT, @ILINE, @LINE, @ITEMCODE, @MESSAGES, @TYPE, @LastUser, @LastDate, @LastTime, @Updated);";
+                                                await connection.ExecuteAsync(lnvlineQuery, InvMessage, transaction);
+                                            }
+                                        }
                                     }
                                     else 
                                     {
                                         detail.TXNDT = DateTime.Now;
-                                        //detail.LINE = await connection.ExecuteScalarAsync<int>(@"SELECT ISNULL(MAX(LINE), 0) + 1 FROM INVLINE WHERE TXNNO = @TXNNO", transaction: transaction);
-                                        detail.LINE = await connection.ExecuteScalarAsync<int>($@"SELECT ISNULL(MAX(LINE), 0) + 1 FROM INVLINE WHERE TXNNO = {detail.TXNNO}", transaction: transaction);
+                                        var nextLine = await connection.ExecuteScalarAsync<int>(@"SELECT ISNULL(CASE WHEN A.MaxLine > B.MaxLine THEN A.MaxLine ELSE B.MaxLine END, 0) + 1 AS NextLine  FROM (SELECT MAX(LINE) AS MaxLine FROM INVLINE WHERE TXNNO = @TXNNO) A, (SELECT MAX(LINE) AS MaxLine FROM INVMESSAGE WHERE TXNNO = @TXNNO) B;", new { TXNNO = detail.TXNNO },transaction: transaction);
+                                        detail.LINE = nextLine;// await connection.ExecuteScalarAsync<int>($@"SELECT ISNULL(MAX(LINE), 0) + 1 FROM INVLINE WHERE TXNNO = {detail.TXNNO}", transaction: transaction);
                                         detailQuery = @"INSERT INTO INVLINE 
                                                                            (BRANCHCODE,TXNNO,TXNDT,VIPNO,SHIFT,[USER],STAFF,LINE,ITEMCODE,ITEMNAME1,ITEMNAME2,CATCODE,SUBCATCODE,BRANDCODE,
                                                                             UNITCODE,QUANTITY,UNITRATE,AMOUNT,TAXPERC,TAXVALUE,COSTAMT,COSTAMTSPA,SPLDISC,DISCPERC,DISCOUNT,LESSAMT,PRINTED,BPRINTED,
@@ -294,20 +344,27 @@ namespace RestaurantOrderApis.Controllers
                                                                              @UNITCODE,@QUANTITY,@UNITRATE,@AMOUNT,@TAXPERC,@TAXVALUE,@COSTAMT,@COSTAMTSPA,@SPLDISC,@DISCPERC,@DISCOUNT,@LESSAMT,@PRINTED,@BPRINTED,
                                                                              @KPRINTED,@EATTAKE,@STATUS,@UPDATED,@STYLECODE,@COLORCODE,@SIZECODE,@STARTTIME,@ENDTIME,@PACKAGEID,@PACKLINE,@REQCUST,@REQCOMPANY, 
                                                                              @REQFLAG,@LASTUSER,CONVERT(datetime2(0), @LASTDATE),@LASTTIME,@REPORTFLAG,@KOT,@SCANITEMCODE,@STATIONID,@PREPARED,@PRICETYPE,@TOPPING,@DEPTCODE,@SEASONCODE,@DINETAKEVAL);";
-                                        //detailQuery = @"INSERT INTO INVLINE 
-                                        //                                   (BRANCHCODE,TXNNO,TXNDT,VIPNO,SHIFT,[USER],STAFF,LINE,ITEMCODE,ITEMNAME1,ITEMNAME2,CATCODE,SUBCATCODE,BRANDCODE,
-                                        //                                    UNITCODE,QUANTITY,UNITRATE,AMOUNT,TAXPERC,TAXVALUE,COSTAMT,COSTAMTSPA,SPLDISC,DISCPERC,DISCOUNT,LESSAMT,PRINTED,BPRINTED,
-                                        //                                    KPRINTED,EATTAKE,STATUS, UPDATED,STYLECODE,COLORCODE,SIZECODE,STARTTIME,ENDTIME,PACKAGEID,PACKLINE,REQCUST,REQCOMPANY, 
-                                        //                                    REQFLAG,LASTUSER,LASTDATE,LASTTIME,REPORTFLAG,KOT,SCANITEMCODE,STATIONID,PREPARED,PRICETYPE,TOPPING,DEPTCODE,SEASONCODE,DINETAKEVAL)
-                                        //                                 VALUES
-                                        //                                    (@BRANCHCODE,@TXNNO,@TXNDT,@VIPNO,@SHIFT,@USER,@STAFF,@LINE,@ITEMCODE,@ITEMNAME1,@ITEMNAME2,@CATCODE,@SUBCATCODE,@BRANDCODE,
-                                        //                                     @UNITCODE,@QUANTITY,@UNITRATE,@AMOUNT,@TAXPERC,@TAXVALUE,@COSTAMT,@COSTAMTSPA,@SPLDISC,@DISCPERC,@DISCOUNT,@LESSAMT,@PRINTED,@BPRINTED,
-                                        //                                     @KPRINTED,@EATTAKE,@STATUS,@UPDATED,@STYLECODE,@COLORCODE,@SIZECODE,@STARTTIME,@ENDTIME,@PACKAGEID,@PACKLINE,@REQCUST,@REQCOMPANY, 
-                                        //                                     @REQFLAG,@LASTUSER,@LASTDATE,@LASTTIME,@REPORTFLAG,@KOT,@SCANITEMCODE,@STATIONID,@PREPARED,@PRICETYPE,@TOPPING,@DEPTCODE,@SEASONCODE,@DINETAKEVAL);";
 
+
+                                        if (!string.IsNullOrEmpty(detailQuery))
+                                            await connection.ExecuteAsync(detailQuery, detail, transaction);
+                                        
+
+                                        foreach (var InvMessage in detail.KotMessages)
+                                        {
+                                            nextLine += 1;
+                                            InvMessage.TXNNO = detail.TXNNO;
+                                            InvMessage.ILINE = detail.LINE;
+                                            InvMessage.LINE = nextLine;
+                                            InvMessage.TXNDT = DateTime.Now;
+                                            InvMessage.LastDate = DateTime.Now;
+                                            InvMessage.LastTime = DateTime.Now.ToString("hh:mm:ss tt");
+
+                                            string lnvlineQuery = @"INSERT INTO INVMESSAGE (BRANCHCODE, TXNNO, TXNDT, ILINE, LINE, ITEMCODE, MESSAGES, TYPE, LastUser, LastDate, LastTime, Updated) VALUES (@BRANCHCODE, @TXNNO, @TXNDT, @ILINE, @LINE, @ITEMCODE, @MESSAGES, @TYPE, @LastUser, @LastDate, @LastTime, @Updated);";
+                                            await connection.ExecuteAsync(lnvlineQuery, InvMessage, transaction);
+                                        }
                                     }
-                                    if(!string.IsNullOrEmpty(detailQuery))
-                                        await connection.ExecuteAsync(detailQuery, detail, transaction);
+                                  
                                 }
 
                                 transaction.Commit();
@@ -372,6 +429,22 @@ namespace RestaurantOrderApis.Controllers
                                                                              @KPRINTED,@EATTAKE,@STATUS,@UPDATED,@STYLECODE,@COLORCODE,@SIZECODE,@STARTTIME,@ENDTIME,@PACKAGEID,@PACKLINE,@REQCUST,@REQCOMPANY, 
                                                                              @REQFLAG,@LASTUSER,CONVERT(datetime2(0), @LASTDATE),@LASTTIME,@REPORTFLAG,@KOT,@SCANITEMCODE,@STATIONID,@PREPARED,@PRICETYPE,@TOPPING,@DEPTCODE,@SEASONCODE,@DINETAKEVAL);";
                                     await connection.ExecuteAsync(detailQuery, detail, transaction);
+
+
+                                    foreach (var InvMessage in detail.KotMessages)
+                                    {
+                                        line += 1;
+                                        InvMessage.TXNNO = detail.TXNNO;
+                                        InvMessage.ILINE = detail.LINE;
+                                        InvMessage.LINE = line;
+                                        InvMessage.TXNDT = DateTime.Now;
+                                        InvMessage.LastDate = DateTime.Now;
+                                        InvMessage.LastTime = DateTime.Now.ToString("hh:mm:ss tt");
+
+                                        string lnvlineQuery = @"INSERT INTO INVMESSAGE (BRANCHCODE, TXNNO, TXNDT, ILINE, LINE, ITEMCODE, MESSAGES, TYPE, LastUser, LastDate, LastTime, Updated) VALUES (@BRANCHCODE, @TXNNO, @TXNDT, @ILINE, @LINE, @ITEMCODE, @MESSAGES, @TYPE, @LastUser, @LastDate, @LastTime, @Updated);";
+                                        await connection.ExecuteAsync(lnvlineQuery, InvMessage, transaction);
+                                    }
+
                                 }
 
                                 transaction.Commit();
@@ -402,15 +475,22 @@ namespace RestaurantOrderApis.Controllers
                 string connStr = _config.GetConnectionString("DefaultConnection");
 
                 using var connection = new SqlConnection(connStr);
+                await connection.OpenAsync();
 
-                string query = @"DELETE FROM INVLINE WHERE TXNNO = @TXNNO AND LINE = @LINE AND ITEMCODE = @ITEMCODE";
+                using var transaction = connection.BeginTransaction();
+
+                string query = @"DELETE FROM INVLINE WHERE TXNNO = @TXNNO AND LINE = @LINE AND ITEMCODE = @ITEMCODE;
+                                 DELETE FROM INVMESSAGE WHERE TXNNO = @TXNNO AND ILINE = @LINE AND ITEMCODE = @ITEMCODE;";
 
                 int rowsAffected = await connection.ExecuteAsync(query, new
                 {
                     removeItem.TXNNO,
                     removeItem.LINE,
                     removeItem.ITEMCODE
-                });
+                }, transaction);
+
+                // Commit if everything is successful
+                transaction.Commit();
 
                 if (rowsAffected == 0)
                     return Ok("Item not found or already removed");
@@ -422,6 +502,253 @@ namespace RestaurantOrderApis.Controllers
                 return StatusCode(500, $"Error removing item: {ex.Message}");
             }
         }
+
+
+
+        [HttpPost("RemoveInvMessageFromCurrentBill")]
+        public async Task<IActionResult> RemoveInvMessageFromCurrentBill([FromBody] INVMESSAGE removeItem)
+        {
+            try
+            {
+                string connStr = _config.GetConnectionString("DefaultConnection");
+
+                using var connection = new SqlConnection(connStr);
+                await connection.OpenAsync();
+
+                using var transaction = connection.BeginTransaction();
+
+                string query = @"DELETE FROM INVMESSAGE WHERE TXNNO = @TXNNO AND ILINE = @ILINE AND LINE = @LINE AND ITEMCODE = @ITEMCODE;";
+
+                int rowsAffected = await connection.ExecuteAsync(query, new
+                {
+                    removeItem.TXNNO,
+                    removeItem.ILINE,
+                    removeItem.LINE,
+                    removeItem.ITEMCODE
+                }, transaction);
+
+                // Commit if everything is successful
+                transaction.Commit();
+
+                if (rowsAffected == 0)
+                    return Ok("Item not found or already removed");
+
+                return Ok("Item removed successfully!");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error removing item: {ex.Message}");
+            }
+        }
+
+        //[HttpPost("RemoveItemFromCurrentBill")]
+        //public async Task<IActionResult> RemoveItemFromCurrentBill([FromBody] INVLINE removeItem)
+        //{
+        //    try
+        //    {
+        //        string connStr = _config.GetConnectionString("DefaultConnection");
+
+        //        using var connection = new SqlConnection(connStr);
+
+        //        string query = @"DELETE FROM INVLINE WHERE TXNNO = @TXNNO AND LINE = @LINE AND ITEMCODE = @ITEMCODE";
+
+        //        int rowsAffected = await connection.ExecuteAsync(query, new
+        //        {
+        //            removeItem.TXNNO,
+        //            removeItem.LINE,
+        //            removeItem.ITEMCODE
+        //        });
+
+        //        if (rowsAffected == 0)
+        //            return Ok("Item not found or already removed");
+
+        //        return Ok("Item removed successfully!");
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return StatusCode(500, $"Error removing item: {ex.Message}");
+        //    }
+        //}
+
+
+
+
+        //public async Task<ActionResult> SaveCurrentBillDetails([FromBody] INVHEADDETAILS CurrentBill)
+        //{
+        //    try
+        //    {
+        //        //if (customer?.ObjCustomer == null)
+        //        //{
+        //        //    return Ok("Customer data is required.");
+        //        //}
+
+
+        //        string connStr = _config.GetConnectionString("DefaultConnection");
+
+        //        using (var connection = new SqlConnection(connStr))
+        //        {
+        //            await connection.OpenAsync();
+        //            if (CurrentBill.CurrentOpenBill.TXNNO > 0)
+        //            {
+
+        //                using (var transaction = connection.BeginTransaction())
+        //                {
+
+        //                    try
+        //                    {
+        //                        string masterQuery = @"UPDATE INVHEAD SET 
+        //                                                 SUBTOTAL = @SUBTOTAL,BRANCHCODE =@BRANCHCODE,TXNDT =CONVERT(datetime2(0), @TXNDT),VIPNO =@VIPNO,SHIFT =@SHIFT,[USER] =@USER, STAFF =@STAFF,ITEMDISC =@ITEMDISC,BILLAMOUNT =@BILLAMOUNT,
+        //                                                                TOTCOSTAMT =@TOTCOSTAMT,DUEDATE =@DUEDATE,SPLPERC =@SPLPERC,SPLSALE =@SPLSALE,SPLNAME =@SPLNAME,DISCPERC =@DISCPERC,BILLDISC =@BILLDISC,BILLCASH =@BILLCASH,
+        //                                                 BILLCARD =@BILLCARD,DEPCASH =@DEPCASH,DEPCARD =@DEPCARD,DEPCURR =@DEPCURR,BILLCURR =@BILLCURR,EXCHRATE =@EXCHRATE,TIPCASH =@TIPCASH,TIPCARD =@TIPCARD,TIPCRDNAME =@TIPCRDNAME,
+        //                                                 TAXAMT =@TAXAMT,TAX1AMT =@TAX1AMT,TAX2AMT =@TAX2AMT,TAXVATAMT =@TAXVATAMT,TABLENO =@TABLENO,NOOFPERSNS =@NOOFPERSNS,EATTAKE =@EATTAKE,LPRINTED =@LPRINTED,ABSORBGST =@ABSORBGST,
+        //                                                 GSTREFNO =@GSTREFNO, REFERENCE1 =@REFERENCE1,REFERENCE2 =@REFERENCE2,CUSTNAME =@CUSTNAME,CUSTADD1 =@CUSTADD1,CUSTADD2 =@CUSTADD2,CUSTADD3 =@CUSTADD3,RECEIPTNO =@RECEIPTNO,
+        //                                                 STATUS =@STATUS,REMARKS =@REMARKS,REPRINT =@REPRINT,UPDATED =@UPDATED,lessamount =@lessamount,GST =@GST,tendered =@tendered,BALANCE =@BALANCE,LASTUSER =@LASTUSER,LASTDATE =CONVERT(datetime2(0), @LASTDATE),
+        //                                                 LASTTIME =@LASTTIME,STATIONID =@STATIONID,SETTLETYPE =@SETTLETYPE,ROOMNO =@ROOMNO,ProviderCd =@ProviderCd WHERE  TXNNO = @TXNNO;";
+
+        //                        var masterId = await connection.ExecuteScalarAsync<double>(masterQuery, CurrentBill.CurrentOpenBill, transaction);
+        //                        foreach (var detail in CurrentBill.CurrentOpenBillDetails)
+        //                        {
+        //                            detail.VIPNO = CurrentBill.CurrentOpenBill.VIPNO;
+        //                            //detail.LASTUSER = "ADMIN";
+        //                            detail.LASTDATE = DateTime.Now;
+        //                            detail.LASTTIME = DateTime.Now.ToString("hh:mm:ss tt");
+        //                            //detail.STATUS = "O";
+        //                            //detail.BRANCHCODE = "HQ";
+
+        //                            string checkTxnItemExists = $@"SELECT CASE 
+        //                                                                      WHEN EXISTS (SELECT 1 FROM INVLINE WHERE TXNNO = {detail.TXNNO} and ITEMCODE ='{detail.ITEMCODE}' and LINE ={detail.LINE})
+        //                                                                      THEN CAST(1 AS BIT) 
+        //                                                                      ELSE CAST(0 AS BIT) 
+        //                                                                  END";
+
+        //                            bool itemExists = await connection.ExecuteScalarAsync<bool>(checkTxnItemExists, transaction: transaction);
+        //                            string detailQuery = string.Empty;
+        //                            if (itemExists)
+        //                            {
+        //                                detailQuery = @"UPDATE INVLINE SET
+        //                                                                  BRANCHCODE=@BRANCHCODE,TXNDT= CONVERT(datetime2(0), @TXNDT),VIPNO=@VIPNO,SHIFT=@SHIFT,[USER]=@USER,STAFF=@STAFF,ITEMNAME1=@ITEMNAME1,
+        //                                                                  ITEMNAME2=@ITEMNAME2,CATCODE=@CATCODE,SUBCATCODE=@SUBCATCODE,BRANDCODE=@BRANDCODE,UNITCODE=@UNITCODE, QUANTITY=@QUANTITY,UNITRATE=@UNITRATE,
+        //                                                                  AMOUNT=@AMOUNT,TAXPERC=@TAXPERC,TAXVALUE=@TAXVALUE,COSTAMT=@COSTAMT,COSTAMTSPA=@COSTAMTSPA,SPLDISC=@SPLDISC,DISCPERC=@DISCPERC,DISCOUNT=@DISCOUNT,
+        //                                                                  LESSAMT=@LESSAMT,PRINTED=@PRINTED,BPRINTED=@BPRINTED,KPRINTED=@KPRINTED,EATTAKE=@EATTAKE,STATUS=@STATUS, UPDATED =@UPDATED,
+        //                                                                  STYLECODE=@STYLECODE,COLORCODE=@COLORCODE,SIZECODE=@SIZECODE,STARTTIME=@STARTTIME,ENDTIME=@ENDTIME,PACKAGEID=@PACKAGEID,PACKLINE=@PACKLINE,
+        //                                                                  REQCUST=@REQCUST,REQCOMPANY=@REQCOMPANY,REQFLAG=@REQFLAG,LASTUSER=@LASTUSER,LASTDATE=CONVERT(datetime2(0), @LASTDATE),LASTTIME=@LASTTIME,REPORTFLAG=@REPORTFLAG,
+        //                                                                  KOT=@KOT,SCANITEMCODE=@SCANITEMCODE,STATIONID=@STATIONID,PREPARED=@PREPARED,PRICETYPE=@PRICETYPE,TOPPING=@TOPPING,DEPTCODE=@DEPTCODE,
+        //                                                                  SEASONCODE=@SEASONCODE,DINETAKEVAL=@DINETAKEVAL  WHERE TXNNO =@TXNNO and ITEMCODE=@ITEMCODE and LINE= @LINE;";
+        //                            }
+        //                            else
+        //                            {
+        //                                detail.TXNDT = DateTime.Now;
+        //                                //detail.LINE = await connection.ExecuteScalarAsync<int>(@"SELECT ISNULL(MAX(LINE), 0) + 1 FROM INVLINE WHERE TXNNO = @TXNNO", transaction: transaction);
+        //                                detail.LINE = await connection.ExecuteScalarAsync<int>($@"SELECT ISNULL(MAX(LINE), 0) + 1 FROM INVLINE WHERE TXNNO = {detail.TXNNO}", transaction: transaction);
+        //                                detailQuery = @"INSERT INTO INVLINE 
+        //                                                                   (BRANCHCODE,TXNNO,TXNDT,VIPNO,SHIFT,[USER],STAFF,LINE,ITEMCODE,ITEMNAME1,ITEMNAME2,CATCODE,SUBCATCODE,BRANDCODE,
+        //                                                                    UNITCODE,QUANTITY,UNITRATE,AMOUNT,TAXPERC,TAXVALUE,COSTAMT,COSTAMTSPA,SPLDISC,DISCPERC,DISCOUNT,LESSAMT,PRINTED,BPRINTED,
+        //                                                                    KPRINTED,EATTAKE,STATUS, UPDATED,STYLECODE,COLORCODE,SIZECODE,STARTTIME,ENDTIME,PACKAGEID,PACKLINE,REQCUST,REQCOMPANY, 
+        //                                                                    REQFLAG,LASTUSER,LASTDATE,LASTTIME,REPORTFLAG,KOT,SCANITEMCODE,STATIONID,PREPARED,PRICETYPE,TOPPING,DEPTCODE,SEASONCODE,DINETAKEVAL)
+        //                                                                 VALUES
+        //                                                                    (@BRANCHCODE,@TXNNO,CONVERT(datetime2(0), @TXNDT),@VIPNO,@SHIFT,@USER,@STAFF,@LINE,@ITEMCODE,@ITEMNAME1,@ITEMNAME2,@CATCODE,@SUBCATCODE,@BRANDCODE,
+        //                                                                     @UNITCODE,@QUANTITY,@UNITRATE,@AMOUNT,@TAXPERC,@TAXVALUE,@COSTAMT,@COSTAMTSPA,@SPLDISC,@DISCPERC,@DISCOUNT,@LESSAMT,@PRINTED,@BPRINTED,
+        //                                                                     @KPRINTED,@EATTAKE,@STATUS,@UPDATED,@STYLECODE,@COLORCODE,@SIZECODE,@STARTTIME,@ENDTIME,@PACKAGEID,@PACKLINE,@REQCUST,@REQCOMPANY, 
+        //                                                                     @REQFLAG,@LASTUSER,CONVERT(datetime2(0), @LASTDATE),@LASTTIME,@REPORTFLAG,@KOT,@SCANITEMCODE,@STATIONID,@PREPARED,@PRICETYPE,@TOPPING,@DEPTCODE,@SEASONCODE,@DINETAKEVAL);";
+        //                                //detailQuery = @"INSERT INTO INVLINE 
+        //                                //                                   (BRANCHCODE,TXNNO,TXNDT,VIPNO,SHIFT,[USER],STAFF,LINE,ITEMCODE,ITEMNAME1,ITEMNAME2,CATCODE,SUBCATCODE,BRANDCODE,
+        //                                //                                    UNITCODE,QUANTITY,UNITRATE,AMOUNT,TAXPERC,TAXVALUE,COSTAMT,COSTAMTSPA,SPLDISC,DISCPERC,DISCOUNT,LESSAMT,PRINTED,BPRINTED,
+        //                                //                                    KPRINTED,EATTAKE,STATUS, UPDATED,STYLECODE,COLORCODE,SIZECODE,STARTTIME,ENDTIME,PACKAGEID,PACKLINE,REQCUST,REQCOMPANY, 
+        //                                //                                    REQFLAG,LASTUSER,LASTDATE,LASTTIME,REPORTFLAG,KOT,SCANITEMCODE,STATIONID,PREPARED,PRICETYPE,TOPPING,DEPTCODE,SEASONCODE,DINETAKEVAL)
+        //                                //                                 VALUES
+        //                                //                                    (@BRANCHCODE,@TXNNO,@TXNDT,@VIPNO,@SHIFT,@USER,@STAFF,@LINE,@ITEMCODE,@ITEMNAME1,@ITEMNAME2,@CATCODE,@SUBCATCODE,@BRANDCODE,
+        //                                //                                     @UNITCODE,@QUANTITY,@UNITRATE,@AMOUNT,@TAXPERC,@TAXVALUE,@COSTAMT,@COSTAMTSPA,@SPLDISC,@DISCPERC,@DISCOUNT,@LESSAMT,@PRINTED,@BPRINTED,
+        //                                //                                     @KPRINTED,@EATTAKE,@STATUS,@UPDATED,@STYLECODE,@COLORCODE,@SIZECODE,@STARTTIME,@ENDTIME,@PACKAGEID,@PACKLINE,@REQCUST,@REQCOMPANY, 
+        //                                //                                     @REQFLAG,@LASTUSER,@LASTDATE,@LASTTIME,@REPORTFLAG,@KOT,@SCANITEMCODE,@STATIONID,@PREPARED,@PRICETYPE,@TOPPING,@DEPTCODE,@SEASONCODE,@DINETAKEVAL);";
+
+        //                            }
+        //                            if (!string.IsNullOrEmpty(detailQuery))
+        //                                await connection.ExecuteAsync(detailQuery, detail, transaction);
+        //                        }
+
+        //                        transaction.Commit();
+        //                        return Ok($"{CurrentBill.CurrentOpenBill.TXNNO} : Updated");
+        //                    }
+        //                    catch (Exception ex)
+        //                    {
+        //                        transaction.Rollback();
+        //                        return Ok(-1);
+        //                    }
+        //                }
+        //            }
+        //            else
+        //            {
+        //                using (var transaction = connection.BeginTransaction())
+        //                {
+
+        //                    try
+        //                    {
+
+        //                        //bool txnExists = await connection.ExecuteScalarAsync<bool>(checkTxnExistsQuery,new { TxnNo = yourTxnNo },transaction: transaction);
+
+        //                        string getMaxTxnNoQuery = "SELECT CAST(ISNULL(MAX(TXNNO), 0) AS INT) FROM INVHEAD";
+        //                        //int maxTxnNo = await connection.ExecuteScalarAsync<int>(getMaxTxnNoQuery);
+        //                        int maxTxnNo = await connection.ExecuteScalarAsync<int>(getMaxTxnNoQuery, transaction: transaction);
+
+        //                        CurrentBill.CurrentOpenBill.TXNNO = maxTxnNo + 1;
+
+        //                        string masterQuery = @"INSERT INTO INVHEAD (SUBTOTAL ,BRANCHCODE ,TXNNO,TXNDT,VIPNO,SHIFT,[USER], STAFF,ITEMDISC,BILLAMOUNT,
+        //                                                                    TOTCOSTAMT,DUEDATE,SPLPERC,SPLSALE,SPLNAME,DISCPERC,BILLDISC,BILLCASH,BILLCARD,DEPCASH,DEPCARD,DEPCURR,BILLCURR,
+        //                                                                    EXCHRATE,TIPCASH,TIPCARD,TIPCRDNAME,TAXAMT,TAX1AMT,TAX2AMT,TAXVATAMT,TABLENO,NOOFPERSNS,EATTAKE,LPRINTED,ABSORBGST,GSTREFNO,
+        //                                                        REFERENCE1,REFERENCE2,CUSTNAME,CUSTADD1,CUSTADD2,CUSTADD3,RECEIPTNO,STATUS,REMARKS,REPRINT,UPDATED,lessamount,GST,
+        //                                                        tendered,BALANCE,LASTUSER,LASTDATE,LASTTIME,STATIONID,SETTLETYPE,ROOMNO,ProviderCd)
+        //                                                             VALUES
+        //                                                                   (@SUBTOTAL,@BRANCHCODE,@TXNNO,CONVERT(datetime2(0), @TXNDT),@VIPNO,@SHIFT,@USER,@STAFF,@ITEMDISC,@BILLAMOUNT,
+        //                                                                    @TOTCOSTAMT,@DUEDATE,@SPLPERC,@SPLSALE,@SPLNAME,@DISCPERC,@BILLDISC,@BILLCASH,@BILLCARD,@DEPCASH,@DEPCARD,@DEPCURR,@BILLCURR,
+        //                                                                    @EXCHRATE,@TIPCASH,@TIPCARD,@TIPCRDNAME,@TAXAMT,@TAX1AMT,@TAX2AMT,@TAXVATAMT, @TABLENO, @NOOFPERSNS,@EATTAKE,@LPRINTED,@ABSORBGST,@GSTREFNO,
+        //                                                        @REFERENCE1,@REFERENCE2,@CUSTNAME,@CUSTADD1,@CUSTADD2,@CUSTADD3,@RECEIPTNO,@STATUS,@REMARKS,@REPRINT,@UPDATED,@lessamount,@GST,
+        //                                                        @tendered,@BALANCE,@LASTUSER,CONVERT(datetime2(0), @LASTDATE),@LASTTIME,@STATIONID,@SETTLETYPE,@ROOMNO,@ProviderCd);";
+        //                        var masterId = await connection.ExecuteScalarAsync<double>(masterQuery, CurrentBill.CurrentOpenBill, transaction);
+
+        //                        int line = 0;
+        //                        foreach (var detail in CurrentBill.CurrentOpenBillDetails)
+        //                        {
+        //                            line += 1;
+        //                            detail.TXNNO = maxTxnNo + 1; // Link to master
+        //                            detail.LINE = line;
+        //                            detail.TXNDT = DateTime.Now;
+        //                            detail.VIPNO = CurrentBill.CurrentOpenBill.VIPNO;
+        //                            // detail.LASTUSER = "ADMIN";
+        //                            detail.LASTDATE = DateTime.Now;
+        //                            detail.LASTTIME = DateTime.Now.ToString("hh:mm:ss tt");
+        //                            //detail.STATUS = "O";
+        //                            //detail.BRANCHCODE = "HQ";
+        //                            string detailQuery = @"INSERT INTO INVLINE (BRANCHCODE,TXNNO,TXNDT,VIPNO,SHIFT,[USER],STAFF,LINE,ITEMCODE,ITEMNAME1,ITEMNAME2,CATCODE,SUBCATCODE,BRANDCODE,
+        //                                                                    UNITCODE,QUANTITY,UNITRATE,AMOUNT,TAXPERC,TAXVALUE,COSTAMT,COSTAMTSPA,SPLDISC,DISCPERC,DISCOUNT,LESSAMT,PRINTED,BPRINTED,
+        //                                                                    KPRINTED,EATTAKE,STATUS, UPDATED,STYLECODE,COLORCODE,SIZECODE,STARTTIME,ENDTIME,PACKAGEID,PACKLINE,REQCUST,REQCOMPANY, 
+        //                                                                    REQFLAG,LASTUSER,LASTDATE,LASTTIME,REPORTFLAG,KOT,SCANITEMCODE,STATIONID,PREPARED,PRICETYPE,TOPPING,DEPTCODE,SEASONCODE,DINETAKEVAL)
+        //                                                                 VALUES
+        //                                                                    (@BRANCHCODE,@TXNNO,CONVERT(datetime2(0), @TXNDT),@VIPNO,@SHIFT,@USER,@STAFF,@LINE,@ITEMCODE,@ITEMNAME1,@ITEMNAME2,@CATCODE,@SUBCATCODE,@BRANDCODE,
+        //                                                                     @UNITCODE,@QUANTITY,@UNITRATE,@AMOUNT,@TAXPERC,@TAXVALUE,@COSTAMT,@COSTAMTSPA,@SPLDISC,@DISCPERC,@DISCOUNT,@LESSAMT,@PRINTED,@BPRINTED,
+        //                                                                     @KPRINTED,@EATTAKE,@STATUS,@UPDATED,@STYLECODE,@COLORCODE,@SIZECODE,@STARTTIME,@ENDTIME,@PACKAGEID,@PACKLINE,@REQCUST,@REQCOMPANY, 
+        //                                                                     @REQFLAG,@LASTUSER,CONVERT(datetime2(0), @LASTDATE),@LASTTIME,@REPORTFLAG,@KOT,@SCANITEMCODE,@STATIONID,@PREPARED,@PRICETYPE,@TOPPING,@DEPTCODE,@SEASONCODE,@DINETAKEVAL);";
+        //                            await connection.ExecuteAsync(detailQuery, detail, transaction);
+        //                        }
+
+        //                        transaction.Commit();
+        //                        return Ok($"{CurrentBill.CurrentOpenBill.TXNNO} : Inserted");
+        //                    }
+        //                    catch (Exception ex)
+        //                    {
+        //                        transaction.Rollback();
+        //                        return Ok(-1);
+        //                    }
+        //                }
+        //            }
+        //        }
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        return Ok(-1);
+        //    }
+        //    return Ok(-1);
+        //}
+
 
     }
 }

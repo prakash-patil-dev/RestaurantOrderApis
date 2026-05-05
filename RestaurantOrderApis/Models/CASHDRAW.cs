@@ -63,7 +63,8 @@
         public decimal CurrencyTotal { get; set; }
         public INVCARD InvCardEntry { get; set; }
         public CASHDRAW CashEntry { get; set; }
-        public INVCURRENCY CurrencyEntry { get; set; }
+        //public INVCURRENCY CurrencyEntry { get; set; }
+        public List<INVCURRENCY> CurrencyEntry { get; set; }
         public string LASTUSER { get; set; }
         public DateTime LASTDATE { get; set; }
         public string LASTTIME { get; set; }

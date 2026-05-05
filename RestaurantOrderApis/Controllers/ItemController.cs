@@ -153,6 +153,71 @@ namespace RestaurantOrderApis.Controllers
         }
 
 
+        //[HttpGet("GetInvLineFromTXNNO/{txnNo}")]
+        //public async Task<ActionResult<List<INVLINE>>> GetInvLineFromTXNNO(double txnNo)
+
+        [HttpGet("GetComboMealListFromCode/{Mealcode}")]
+        public async Task<ActionResult<List<Combo>>> GetComboMealListFromCode(string Mealcode)
+        {
+            try
+            {
+                string connStr = _config.GetConnectionString("DefaultConnection");
+
+                using var connection = new SqlConnection(connStr);
+
+                string query = @"SELECT * FROM COMBO WHERE CODE = @Mealcode ORDER BY CODE;";
+
+                var comboList = (await connection.QueryAsync<Combo>(query, new { Mealcode })).ToList();
+                return Ok(comboList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error fetching combo list: {ex.Message}");
+            }
+        }
+
+
+        [HttpGet("GetToppingListFromCode/{itemCode}")]
+        public async Task<ActionResult<List<item>>> GetToppingListFromCode(string itemCode)
+        {
+            try
+            {
+                string connStr = _config.GetConnectionString("DefaultConnection");
+
+                using var connection = new SqlConnection(connStr);
+
+                string query = @"SELECT i.* FROM ITEM i INNER JOIN TOPPING t ON i.ITEMCODE = t.TOPCODE WHERE t.MAINCODE= @itemCode;";
+
+                var comboList = (await connection.QueryAsync<item>(query, new { itemCode })).ToList();
+                return Ok(comboList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error fetching combo list: {ex.Message}");
+            }
+        }
+
+        [HttpGet("GetKotmessageList")]
+        public async Task<ActionResult<List<KotMessage>>> GetKotmessageList()
+        {
+            try
+            {
+                string connStr = _config.GetConnectionString("DefaultConnection");
+
+                using var connection = new SqlConnection(connStr);
+
+                string query = @"select * from kotmessage;";
+
+                var comboList = (await connection.QueryAsync<KotMessage>(query)).ToList();
+
+                return Ok(comboList);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Error fetching combo list: {ex.Message}");
+            }
+        }
+
 
         [HttpGet("GetComboFullList")]
         public async Task<ActionResult<List<Combo>>> GetComboFullList()

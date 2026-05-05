@@ -144,4 +144,10 @@
         public string UPDATED { get; set; } = string.Empty;         
     }
 
+    public class KotMessage
+    {
+        public string CODE { get; set; }
+        public string NAME { get; set; }
+    }
+
 }
